@@ -162,8 +162,16 @@ fun LoginScreen(onLogged: () -> Unit) {
                 Spacer(Modifier.height(18.dp))
 
                 InputRow("服务器地址", server, "http://192.168.1.10:5666") { editing = "server" }
-                InputRow("用户名", username, "飞牛账号") { editing = "username" }
-                InputRow("密码", password, "密码", isPassword = true) { editing = "password" }
+                InputRow("用户名", username, "飞牛 NAS 本地账号") { editing = "username" }
+                InputRow("密码", password, "NAS 密码（区分大小写）", isPassword = true) { editing = "password" }
+
+                Text(
+                    "用登录 fnOS 桌面的本地账号，不是飞牛云 / FN Connect 账号；密码可用软键盘的「大写」「符号」「显示」核对。",
+                    color = TextDim,
+                    fontSize = 10.sp,
+                    lineHeight = 16.sp,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
 
                 if (error != null) {
                     Text(error!!, color = Danger, fontSize = 12.sp, lineHeight = 18.sp)
@@ -186,10 +194,7 @@ fun LoginScreen(onLogged: () -> Unit) {
                                     Repo.login(server, username, password)
                                     onLogged()
                                 } catch (e: Exception) {
-                                    error = when (e) {
-                                        is FnException -> e.message
-                                        else -> e.message ?: "登录失败"
-                                    }
+                                    error = friendlyLoginError(e.message ?: "登录失败")
                                 } finally {
                                     loading = false
                                 }
@@ -227,5 +232,20 @@ fun LoginScreen(onLogged: () -> Unit) {
         "password" -> TvKeyboardDialog("密码", password, password = true, onDismiss = { editing = null }) {
             password = it; editing = null
         }
+    }
+}
+
+/** 把飞牛返回的英文错误码翻成可操作的中文提示。 */
+private fun friendlyLoginError(raw: String): String {
+    val lower = raw.lowercase()
+    return when {
+        lower.contains("password incorrect") || raw.contains("密码错误") || raw.contains("密码不正确") ->
+            "密码不正确。请确认：① 用的是 NAS 本地账号（不是飞牛云 / FN Connect 账号）；" +
+                "② 大小写和符号没输错（软键盘左下可切「大写」「符号」，右侧「显示」可核对明文）。"
+        lower.contains("user not exist") || lower.contains("not found") || raw.contains("用户不存在") ->
+            "账号不存在：请填 fnOS 的本地用户名（不是邮箱，也不是飞牛云 ID）。"
+        lower.contains("too many") || raw.contains("封禁") || raw.contains("频繁") ->
+            "尝试次数过多，飞牛可能已临时封禁：请等 30 秒再试，不要连续点。"
+        else -> raw
     }
 }
