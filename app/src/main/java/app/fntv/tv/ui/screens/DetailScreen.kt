@@ -1,23 +1,30 @@
 package app.fntv.tv.ui.screens
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,9 +43,13 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.fntv.tv.data.Episode
@@ -48,12 +59,15 @@ import app.fntv.tv.data.MediaItem
 import app.fntv.tv.data.PlayRequest
 import app.fntv.tv.data.Repo
 import app.fntv.tv.data.Season
+import app.fntv.tv.data.imagePath
 import app.fntv.tv.ui.Accent
-import app.fntv.tv.ui.AccentSoft
+import app.fntv.tv.ui.Bg
 import app.fntv.tv.ui.Danger
 import app.fntv.tv.ui.ErrorBox
 import app.fntv.tv.ui.Gold
 import app.fntv.tv.ui.LoadingBox
+import app.fntv.tv.ui.Surface1
+import app.fntv.tv.ui.Surface2
 import app.fntv.tv.ui.TextDim
 import app.fntv.tv.ui.TextPrimary
 import app.fntv.tv.ui.TextSecondary
@@ -62,6 +76,256 @@ import app.fntv.tv.ui.requestFocusWhenReady
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 
+/* ───────────────────────── 通栏工具 ───────────────────────── */
+
+/**
+ * 让 LazyVerticalGrid 里的整宽区块突破 contentPadding 的左右内边距。
+ * Lazy 布局只沿滚动方向裁剪，所以水平方向画出线宽之外不会被切掉；
+ * 这里按「父容器给出的线宽 + 两侧内边距」重新 measure，并向左偏移贴齐屏幕。
+ */
+private fun Modifier.fullBleed(horizontalInset: Dp): Modifier = this.layout { measurable, constraints ->
+    val inset = horizontalInset.roundToPx()
+    val width = constraints.maxWidth + inset * 2
+    val placeable = measurable.measure(
+        Constraints(
+            minWidth = width,
+            maxWidth = width,
+            minHeight = constraints.minHeight,
+            maxHeight = constraints.maxHeight,
+        )
+    )
+    // 对外仍只占线宽，绘制时左右各溢出 inset，正好压掉 grid 的 contentPadding
+    layout(constraints.maxWidth, placeable.height) {
+        placeable.placeRelative(-inset, 0)
+    }
+}
+
+/* ───────────────────────── 顶部 Hero ───────────────────────── */
+
+@Composable
+private fun StatusTag(text: String, tint: Color, bg: Color) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(bg)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Text(text, color = tint, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+    }
+}
+
+/**
+ * 沉浸式头图：横版剧照铺满屏宽，底部/左侧双层渐变压暗，左下叠标题、评分、
+ * 元信息、三行简介与操作按钮。
+ */
+@Composable
+private fun HeroSection(
+    item: MediaItem,
+    height: Dp,
+    playLabel: String,
+    playFocus: FocusRequester,
+    notice: String?,
+    onPlay: () -> Unit,
+    onMarkWatched: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(height),
+    ) {
+        // 背景优先横版剧照（backdrops），没有才退回竖版海报
+        val backdropPath = item.raw?.imagePath("backdrops") ?: item.poster
+        val backdrop = Repo.imageUrl(backdropPath, 1000)
+        if (backdrop.isNotEmpty()) {
+            AsyncImage(
+                model = backdrop,
+                contentDescription = item.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Box(Modifier.fillMaxSize().background(Surface1))
+        }
+
+        // 底部 → 黑：下半部分一路过渡到页面底色，文字压在图上也清晰
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.40f to Color.Black.copy(alpha = 0.25f),
+                        0.72f to Color.Black.copy(alpha = 0.74f),
+                        1f to Bg,
+                    )
+                )
+        )
+        // 左 → 右：左侧压暗给文字，右侧保留剧照细节
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.horizontalGradient(
+                        0f to Color.Black.copy(alpha = 0.86f),
+                        0.42f to Color.Black.copy(alpha = 0.42f),
+                        0.78f to Color.Transparent,
+                    )
+                )
+        )
+        // 顶部轻轻压暗，和顶栏交界不生硬
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(72.dp)
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.45f),
+                        1f to Color.Transparent,
+                    )
+                )
+        )
+
+        Column(
+            Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .padding(start = 48.dp, end = 48.dp, bottom = 22.dp),
+        ) {
+            Text(
+                item.title,
+                color = TextPrimary,
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(10.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (item.rating > 0) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("★", color = Gold, fontSize = 14.sp)
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            String.format("%.1f", item.rating),
+                            color = Gold,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+                val meta = buildList {
+                    if (item.year.isNotEmpty()) add(item.year)
+                    if (item.seasons > 1) add("${item.seasons} 季")
+                    if (item.episodes > 0) add("${item.episodes} 集")
+                }.joinToString(" · ")
+                if (meta.isNotEmpty()) {
+                    Text(meta, color = TextSecondary, fontSize = 13.sp)
+                }
+                if (item.watched) {
+                    StatusTag("已看完", Color(0xFF04101F), Accent)
+                } else if (item.ts > 0 && !item.watched) {
+                    StatusTag("继续观看", Gold, Gold.copy(alpha = 0.16f))
+                }
+            }
+
+            if (item.overview.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    item.overview,
+                    color = TextSecondary,
+                    fontSize = 14.sp,
+                    lineHeight = 22.sp,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 760.dp),
+                )
+            }
+
+            Spacer(Modifier.height(18.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TvButton(
+                    text = playLabel,
+                    onClick = onPlay,
+                    primary = true,
+                    focusRequester = playFocus,
+                )
+                Spacer(Modifier.width(12.dp))
+                TvButton("标记已看", onClick = onMarkWatched)
+                if (notice != null) {
+                    Spacer(Modifier.width(16.dp))
+                    Text(
+                        notice,
+                        color = if (notice.startsWith("标记失败")) Danger else Accent,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/* ───────────────────────── 季胶囊 ───────────────────────── */
+
+@Composable
+private fun SeasonChip(season: Season, selected: Boolean, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "seasonScale")
+    val bg by animateColorAsState(
+        when {
+            selected -> Accent
+            focused -> Surface2
+            else -> Surface1
+        },
+        label = "seasonBg",
+    )
+    val border by animateColorAsState(
+        when {
+            focused -> Color.White.copy(alpha = 0.9f)
+            selected -> Accent
+            else -> Color.White.copy(alpha = 0.07f)
+        },
+        label = "seasonBorder",
+    )
+    val shape = RoundedCornerShape(19.dp)
+
+    Box(
+        modifier = Modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .height(38.dp)
+            .clip(shape)
+            .background(bg)
+            .border(if (focused) 2.dp else 1.dp, border, shape)
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(onClick = onClick)
+            .padding(horizontal = 22.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            season.title,
+            color = when {
+                selected -> Color(0xFF04101F)
+                focused -> TextPrimary
+                else -> TextSecondary
+            },
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+        )
+    }
+}
+
+/* ───────────────────────── 剧集卡 ───────────────────────── */
+
 @Composable
 private fun EpisodeCard(
     ep: Episode,
@@ -69,24 +333,32 @@ private fun EpisodeCard(
     focusRequester: FocusRequester?,
 ) {
     var focused by remember { mutableStateOf(false) }
-    Column(
+    val scale by animateFloatAsState(if (focused) 1.05f else 1f, label = "epScale")
+    val borderColor by animateColorAsState(
+        if (focused) Accent else Color.White.copy(alpha = 0.07f),
+        label = "epBorder",
+    )
+    val shape = RoundedCornerShape(10.dp)
+
+    Box(
         modifier = Modifier
-            .width(118.dp)
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .onFocusChanged { focused = it.isFocused }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .clickable(onClick = onClick),
     ) {
+        // 16:9 缩略图：有图用图，没图用深色底 + 集号大字
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(68.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(if (focused) Color(0xFF22324E) else Color(0xFF151E2F))
-                .border(
-                    if (focused) 2.dp else 1.dp,
-                    if (focused) Accent else Color.White.copy(alpha = 0.07f),
-                    RoundedCornerShape(8.dp)
-                ),
+                .aspectRatio(16f / 9f)
+                .clip(shape)
+                .background(Surface1)
+                .border(if (focused) 2.dp else 1.dp, borderColor, shape),
         ) {
             val img = Repo.imageUrl(ep.poster, 300)
             if (img.isNotEmpty()) {
@@ -98,26 +370,60 @@ private fun EpisodeCard(
                 )
             } else {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("${ep.number}", color = TextSecondary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "${ep.number}",
+                        color = TextDim,
+                        fontSize = 30.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
             }
+
+            // 底部渐变，压住集号与标题
             Box(
                 Modifier
                     .fillMaxSize()
                     .background(
-                        Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)))
+                        Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            0.42f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = 0.85f),
+                        )
                     )
             )
-            Text(
-                "第 ${ep.number} 集",
-                color = TextPrimary,
-                fontSize = 11.sp,
-                modifier = Modifier
+
+            Column(
+                Modifier
                     .align(Alignment.BottomStart)
-                    .padding(6.dp),
-            )
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+            ) {
+                Text(
+                    "第 ${ep.number} 集",
+                    color = if (focused) Accent else TextPrimary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Text(
+                    ep.title,
+                    color = TextSecondary,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            // 观看进度
             if (ep.duration > 0 && ep.ts > 0) {
                 val p = (ep.ts.toFloat() / ep.duration).coerceIn(0f, 1f)
+                Box(
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .background(Color.White.copy(alpha = 0.16f))
+                )
                 Box(
                     Modifier
                         .align(Alignment.BottomStart)
@@ -126,63 +432,30 @@ private fun EpisodeCard(
                         .background(Accent)
                 )
             }
+
+            // 已看角标
             if (ep.watched) {
                 Box(
                     Modifier
                         .align(Alignment.TopEnd)
-                        .padding(4.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(Color.Black.copy(alpha = 0.6f))
-                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                        .padding(5.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.Black.copy(alpha = 0.66f))
+                        .padding(horizontal = 5.dp, vertical = 2.dp),
                 ) {
-                    Text("已看", color = TextDim, fontSize = 9.sp)
+                    Text("已看", color = TextSecondary, fontSize = 9.sp)
                 }
             }
+
+            // 焦点态：再叠一层极淡的 accent 罩，让当前卡在深色页面上更醒目
+            if (focused) {
+                Box(Modifier.fillMaxSize().background(Accent.copy(alpha = 0.08f)))
+            }
         }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            ep.title,
-            color = if (focused) TextPrimary else TextSecondary,
-            fontSize = 11.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 
-@Composable
-private fun SeasonChip(season: Season, selected: Boolean, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    Box(
-        modifier = Modifier
-            .height(36.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(
-                when {
-                    focused -> Color(0xFF2A3E60)
-                    selected -> AccentSoft
-                    else -> Color(0xFF151E2F)
-                }
-            )
-            .border(
-                if (focused) 2.dp else 1.dp,
-                if (focused) Color.White.copy(alpha = 0.75f)
-                else if (selected) Accent.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.06f),
-                RoundedCornerShape(18.dp)
-            )
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            season.title,
-            color = if (selected || focused) TextPrimary else TextSecondary,
-            fontSize = 13.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-        )
-    }
-}
+/* ───────────────────────── 详情页 ───────────────────────── */
 
 @Composable
 fun DetailScreen(
@@ -265,133 +538,60 @@ fun DetailScreen(
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
-        // 背景
-        val bg = Repo.imageUrl(item.poster, 900)
-        if (bg.isNotEmpty()) {
-            AsyncImage(
-                model = bg,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                alpha = 0.22f,
-                modifier = Modifier.fillMaxSize(),
-            )
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(Color(0xF0060910), Color(0xC0060910), Color(0x99060910))
-                        )
-                    )
-            )
-        }
-
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Bg)
+    ) {
         when {
             loading -> LoadingBox("正在读取剧集…")
             error != null -> ErrorBox(error!!) { reloadKey++ }
-            else -> {
+            else -> BoxWithConstraints(Modifier.fillMaxSize()) {
+                // 内容区已扣掉顶栏：取内容区高度的一半，换算到整屏约 46%（和首页 Hero 同一套比例）
+                val heroHeight = (maxHeight * 0.50f).coerceIn(280.dp, 560.dp)
+                val resume = item.ts > 0 && !item.watched
+                val playLabel = if (resume) "▶ 继续播放" else "▶ 播放"
+
+                // 整页只有一个滚动容器：Hero / 季切换 / 选集都作为 grid item
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(108.dp),
+                    columns = GridCells.Adaptive(128.dp),
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 8.dp, bottom = 40.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(start = 48.dp, end = 48.dp, bottom = 44.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
+                    // ① 通栏 Hero（fullBleed 抵消左右 contentPadding）
                     item(span = { GridItemSpan(maxLineSpan) }) {
-                        Row(Modifier.padding(bottom = 8.dp)) {
-                            Box(
-                                Modifier
-                                    .width(190.dp)
-                                    .height(276.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFF131B2C))
-                                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
-                            ) {
-                                val img = Repo.imageUrl(item.poster, 600)
-                                if (img.isNotEmpty()) {
-                                    AsyncImage(
-                                        model = img,
-                                        contentDescription = item.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
-                                }
-                            }
-
-                            Spacer(Modifier.width(26.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    item.title,
-                                    color = TextPrimary,
-                                    fontSize = 30.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Spacer(Modifier.height(8.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (item.rating > 0) {
-                                        Text(
-                                            String.format("%.1f", item.rating),
-                                            color = Gold,
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Bold,
-                                        )
-                                        Spacer(Modifier.width(14.dp))
-                                    }
-                                    val meta = buildList {
-                                        if (item.year.isNotEmpty()) add(item.year)
-                                        if (item.seasons > 1) add("${item.seasons} 季")
-                                        if (item.episodes > 0) add("${item.episodes} 集")
-                                        if (item.watched) add("已看完")
-                                    }.joinToString(" · ")
-                                    if (meta.isNotEmpty()) {
-                                        Text(meta, color = TextSecondary, fontSize = 13.sp)
+                        HeroSection(
+                            modifier = Modifier.fullBleed(48.dp),
+                            item = item,
+                            height = heroHeight,
+                            playLabel = playLabel,
+                            playFocus = playFocus,
+                            notice = notice,
+                            onPlay = { startPlay() },
+                            onMarkWatched = {
+                                scope.launch {
+                                    try {
+                                        FnApi.markWatched(Repo.server, Repo.token, item.guid)
+                                        notice = "已标记为已看"
+                                    } catch (e: Exception) {
+                                        notice = "标记失败：${e.message}"
                                     }
                                 }
-                                Spacer(Modifier.height(14.dp))
-                                Text(
-                                    item.overview.ifEmpty { "暂无简介" },
-                                    color = TextSecondary,
-                                    fontSize = 13.sp,
-                                    lineHeight = 22.sp,
-                                    maxLines = 5,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Spacer(Modifier.height(20.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    TvButton(
-                                        text = if (item.ts > 0 && !item.watched) "继续播放" else "播放",
-                                        onClick = { startPlay() },
-                                        primary = true,
-                                        focusRequester = playFocus,
-                                    )
-                                    Spacer(Modifier.width(12.dp))
-                                    TvButton("标记已看", onClick = {
-                                        scope.launch {
-                                            try {
-                                                FnApi.markWatched(Repo.server, Repo.token, item.guid)
-                                                notice = "已标记为已看"
-                                            } catch (e: Exception) {
-                                                notice = "标记失败：${e.message}"
-                                            }
-                                        }
-                                    })
-                                    if (notice != null) {
-                                        Spacer(Modifier.width(16.dp))
-                                        Text(notice!!, color = Accent, fontSize = 12.sp)
-                                    }
-                                }
-                            }
-                        }
+                            },
+                        )
                     }
 
+                    // ② 多季时一行季胶囊
                     if (seasons.size > 1) {
                         item(span = { GridItemSpan(maxLineSpan) }) {
                             Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.padding(bottom = 4.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 seasons.forEachIndexed { idx, season ->
                                     SeasonChip(season, idx == seasonIndex) {
@@ -410,12 +610,33 @@ fun DetailScreen(
                         }
                     }
 
+                    // ③ 选集
                     if (episodes.isNotEmpty()) {
                         item(span = { GridItemSpan(maxLineSpan) }) {
-                            Row(Modifier.padding(top = 4.dp, bottom = 2.dp)) {
-                                Text("选集", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+                            ) {
+                                Box(
+                                    Modifier
+                                        .width(4.dp)
+                                        .height(18.dp)
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(Accent)
+                                )
                                 Spacer(Modifier.width(10.dp))
-                                Text("${episodes.size} 集", color = TextDim, fontSize = 12.sp)
+                                Text(
+                                    "选集",
+                                    color = TextPrimary,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    "· 共 ${episodes.size} 集",
+                                    color = TextDim,
+                                    fontSize = 12.sp,
+                                )
                             }
                         }
                         items(episodes, key = { it.guid }) { ep ->
@@ -423,11 +644,20 @@ fun DetailScreen(
                         }
                     } else if (seriesLike) {
                         item(span = { GridItemSpan(maxLineSpan) }) {
-                            Text(
-                                "飞牛里还没有这一季的剧集文件",
-                                color = Danger,
-                                fontSize = 13.sp,
-                            )
+                            Column(Modifier.padding(top = 8.dp)) {
+                                Text(
+                                    "这一季还没有剧集",
+                                    color = TextPrimary,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    "换个季数看看，或稍后在飞牛影视里重新扫描一次媒体库。",
+                                    color = TextDim,
+                                    fontSize = 12.sp,
+                                )
+                            }
                         }
                     }
                 }

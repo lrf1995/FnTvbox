@@ -123,16 +123,28 @@ object Repo {
      */
     suspend fun loadItems(ancestorGuid: String, page: Int = 1, parentGuid: String? = null): List<MediaItem> {
         val key = parentGuid ?: ancestorGuid
-        val json = FnApi.itemList(
+        var json = FnApi.itemList(
             server, token,
             ancestorGuid = if (parentGuid == null) ancestorGuid else null,
             parentGuid = parentGuid,
             page = page,
             pageSize = 60,
         )
-        val arr = json.optJSONArray("list") ?: org.json.JSONArray()
-        val items = (0 until arr.length()).mapNotNull { i ->
-            arr.optJSONObject(i)?.let(MediaItem::from)?.takeIf { it.guid.isNotEmpty() && it.title.isNotEmpty() }
+        var items = parseList(json)
+        // 个别媒体库（例如「个人电影」）在类型白名单过滤下会返回 0 条，
+        // 首页就会只剩「继续观看」。第 1 页空了就放宽一次过滤再试。
+        if (page == 1 && items.isEmpty()) {
+            runCatching {
+                json = FnApi.itemList(
+                    server, token,
+                    ancestorGuid = if (parentGuid == null) ancestorGuid else null,
+                    parentGuid = parentGuid,
+                    page = page,
+                    pageSize = 60,
+                    withTypeFilter = false,
+                )
+            }
+            items = parseList(json)
         }
         val total = json.optInt("total", 0)
         val bucket = itemCache.getOrPut(key) { mutableListOf() }
@@ -141,6 +153,14 @@ object Repo {
         pageCache[key] = page
         if (total > 0 && bucket.size >= total) pageCache[key] = -1
         return items
+    }
+
+    private fun parseList(json: org.json.JSONObject): List<MediaItem> {
+        val arr = json.optJSONArray("list") ?: org.json.JSONArray()
+        return (0 until arr.length()).mapNotNull { i ->
+            arr.optJSONObject(i)?.let(MediaItem::from)
+                ?.takeIf { it.guid.isNotEmpty() && it.title.isNotEmpty() }
+        }
     }
 
     fun cachedItems(key: String): List<MediaItem> = itemCache[key].orEmpty()

@@ -410,6 +410,7 @@ object FnApi {
         pageSize: Int = 60,
         sortColumn: String = "create_time",
         sortType: String = "DESC",
+        withTypeFilter: Boolean = true,
     ): JSONObject {
         val body = JSONObject()
         if (parentGuid != null) {
@@ -425,13 +426,15 @@ object FnApi {
         }
         body.put("page", page)
         body.put("page_size", pageSize)
-        body.put(
-            "tags",
-            JSONObject().put(
-                "type",
-                JSONArray().put("Movie").put("TV").put("Directory").put("Video").put("LiveChannel")
+        if (withTypeFilter) {
+            body.put(
+                "tags",
+                JSONObject().put(
+                    "type",
+                    JSONArray().put("Movie").put("TV").put("Directory").put("Video").put("LiveChannel")
+                )
             )
-        )
+        }
         return call(server, "/v/api/v1/item/list", "POST", token, body)
     }
 
