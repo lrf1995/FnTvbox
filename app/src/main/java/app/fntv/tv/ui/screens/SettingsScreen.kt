@@ -1,4 +1,4 @@
-﻿package app.fntv.tv.ui.screens
+package app.fntv.tv.ui.screens
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
@@ -45,6 +45,7 @@ import app.fntv.tv.data.Prefs
 import app.fntv.tv.data.Repo
 import app.fntv.tv.ui.Accent
 import app.fntv.tv.ui.Danger
+import app.fntv.tv.ui.TvKeyboardDialog
 import app.fntv.tv.ui.Surface1
 import app.fntv.tv.ui.Surface2
 import app.fntv.tv.ui.TextDim
@@ -57,7 +58,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 设置页：连接 / 播放 / 数据 / 关于 四组卡片。
+ * 设置页：连接 / 播放 / 元数据 / 数据 / 关于 五组卡片。
  *
  * TV 上不用 Material 的 Switch（焦点与摇杆操作体验都差），
  * 开关用「一行文字 + 右侧开/关胶囊」表示，整行可点击切换。
@@ -72,11 +73,25 @@ fun SettingsScreen(
     var autoNext by remember { mutableStateOf(Prefs.autoNextEpisode) }
     var status by remember { mutableStateOf<String?>(null) }
     var statusSeq by remember { mutableIntStateOf(0) }
+    // 元数据组自己的提示语：不和上面「数据」组共用，避免提示跑到屏幕另一头
+    var metaStatus by remember { mutableStateOf<String?>(null) }
+    var metaStatusSeq by remember { mutableIntStateOf(0) }
+    // 元数据/弹幕的本地状态：改完立刻回写 Prefs
+    var tmdbKey by remember { mutableStateOf(Prefs.tmdbKey) }
+    var danmuBase by remember { mutableStateOf(Prefs.danmuApiBase) }
+    var danmakuOn by remember { mutableStateOf(Prefs.danmakuEnabled) }
+    // 当前正在用软键盘编辑的行：null / "tmdb" / "danmu"
+    var editing by remember { mutableStateOf<String?>(null) }
     val firstFocus = remember { FocusRequester() }
 
     fun notify(text: String) {
         statusSeq += 1
         status = text
+    }
+
+    fun notifyMeta(text: String) {
+        metaStatusSeq += 1
+        metaStatus = text
     }
 
     // LazyColumn 首项要等布局挂载后才有焦点节点，先试一次，失败再等一帧重试。
@@ -91,6 +106,13 @@ fun SettingsScreen(
         if (statusSeq > 0) {
             delay(2600)
             status = null
+        }
+    }
+
+    LaunchedEffect(metaStatusSeq) {
+        if (metaStatusSeq > 0) {
+            delay(2600)
+            metaStatus = null
         }
     }
 
@@ -150,6 +172,46 @@ fun SettingsScreen(
                     },
                     trailing = { TogglePill(autoNext) },
                 )
+            }
+        }
+
+        /* ── 元数据 / 弹幕 ── */
+        item {
+            SettingsGroup("元数据与弹幕") {
+                SettingRow(
+                    title = "TMDB API Key",
+                    subtitle = "填了才用 TMDB 补全简介；留空只用 Bangumi",
+                    value = tmdbKey.ifEmpty { "未设置" },
+                    valueColor = if (tmdbKey.isEmpty()) Danger else TextSecondary,
+                    onAction = { editing = "tmdb" },
+                )
+                SettingRow(
+                    title = "弹幕 API 地址",
+                    subtitle = "自建弹幕容器的地址，下一版生效",
+                    value = danmuBase.ifEmpty { "未设置" },
+                    valueColor = if (danmuBase.isEmpty()) Danger else TextSecondary,
+                    onAction = { editing = "danmu" },
+                )
+                SettingRow(
+                    title = "弹幕",
+                    subtitle = "播放时自动加载并显示弹幕",
+                    onAction = {
+                        danmakuOn = !danmakuOn
+                        Prefs.danmakuEnabled = danmakuOn
+                        notifyMeta(if (danmakuOn) "弹幕已开启" else "弹幕已关闭")
+                    },
+                    trailing = { TogglePill(danmakuOn) },
+                )
+                metaStatus?.let { text ->
+                    Text(
+                        text = text,
+                        color = Accent,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 18.dp, top = 8.dp, bottom = 6.dp),
+                    )
+                }
             }
         }
 
@@ -219,6 +281,34 @@ fun SettingsScreen(
                     subtitle = "非飞牛官方客户端，仅用于播放你自己 NAS 上的媒体",
                 )
             }
+        }
+    }
+
+    // 遥控器软键盘编辑：确定时 trim 后立刻落盘。
+    // 弹幕地址额外去掉结尾的「/」，避免拼接口时出现 //。
+    when (editing) {
+        "tmdb" -> TvKeyboardDialog(
+            title = "TMDB API Key",
+            initial = tmdbKey,
+            onDismiss = { editing = null },
+        ) { value ->
+            val v = value.trim()
+            tmdbKey = v
+            Prefs.tmdbKey = v
+            editing = null
+            notifyMeta(if (v.isEmpty()) "已清空 TMDB API Key" else "TMDB API Key 已保存")
+        }
+
+        "danmu" -> TvKeyboardDialog(
+            title = "弹幕 API 地址",
+            initial = danmuBase,
+            onDismiss = { editing = null },
+        ) { value ->
+            val v = value.trim().trimEnd('/')
+            danmuBase = v
+            Prefs.danmuApiBase = v
+            editing = null
+            notifyMeta(if (v.isEmpty()) "已清空弹幕 API 地址" else "弹幕 API 地址已保存")
         }
     }
 }

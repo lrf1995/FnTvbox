@@ -56,6 +56,8 @@ import app.fntv.tv.data.Episode
 import app.fntv.tv.data.FnApi
 import app.fntv.tv.data.FnException
 import app.fntv.tv.data.MediaItem
+import app.fntv.tv.data.MetaInfo
+import app.fntv.tv.data.MetaRepo
 import app.fntv.tv.data.PlayRequest
 import app.fntv.tv.data.Repo
 import app.fntv.tv.data.Season
@@ -74,7 +76,9 @@ import app.fntv.tv.ui.TextSecondary
 import app.fntv.tv.ui.TvButton
 import app.fntv.tv.ui.requestFocusWhenReady
 import coil.compose.AsyncImage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 /* ───────────────────────── 通栏工具 ───────────────────────── */
 
@@ -100,6 +104,15 @@ private fun Modifier.fullBleed(horizontalInset: Dp): Modifier = this.layout { me
     }
 }
 
+/* ───────────────────────── 外部元数据 ───────────────────────── */
+
+/** 外部元数据来源的展示名：接口给的是小写标识，这里转成界面上看到的品牌名。 */
+private fun metaSourceLabel(source: String): String = when (source.lowercase()) {
+    "bangumi" -> "Bangumi"
+    "tmdb" -> "TMDB"
+    else -> source.replaceFirstChar { it.uppercase() }.ifEmpty { "元数据" }
+}
+
 /* ───────────────────────── 顶部 Hero ───────────────────────── */
 
 @Composable
@@ -117,10 +130,14 @@ private fun StatusTag(text: String, tint: Color, bg: Color) {
 /**
  * 沉浸式头图：横版剧照铺满屏宽，底部/左侧双层渐变压暗，左下叠标题、评分、
  * 元信息、三行简介与操作按钮。
+ *
+ * meta 是外部元数据（Bangumi/TMDB）的兜底数据，可能为 null 或加载中；
+ * 为空时这里所有取值的表现都和没接元数据之前完全一致。
  */
 @Composable
 private fun HeroSection(
     item: MediaItem,
+    meta: MetaInfo?,
     height: Dp,
     playLabel: String,
     playFocus: FocusRequester,
@@ -129,14 +146,43 @@ private fun HeroSection(
     onMarkWatched: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // 评分：外部评分有效且和飞牛评分不一致（容差 0.05，避开 8.6 与 8.6000001 这种浮点差）时，
+    // 改用外部评分并标出来源；否则仍用飞牛自带的 item.rating。
+    val externalRating = meta?.rating?.takeIf { it > 0.0 }
+    val displayRating: Double
+    val ratingSource: String?
+    if (externalRating != null && abs(externalRating - item.rating) >= 0.05) {
+        displayRating = externalRating
+        ratingSource = metaSourceLabel(meta?.source.orEmpty())
+    } else {
+        displayRating = item.rating
+        ratingSource = null
+    }
+
+    // 简介：飞牛简介为空或不足 10 字时才用外部简介兜底；两边都有内容时优先飞牛。
+    val displayOverview = if (item.overview.length < 10) {
+        meta?.overview?.takeIf { it.isNotBlank() } ?: item.overview
+    } else {
+        item.overview
+    }
+
+    // 主演/声优：最多取前 6 个名字，单行展示，避免把 Hero 撑高。
+    val castNames = meta?.cast
+        ?.map { it.name }
+        ?.filter { it.isNotBlank() }
+        ?.take(6)
+        .orEmpty()
+
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(height),
     ) {
-        // 背景优先横版剧照（backdrops），没有才退回竖版海报
-        val backdropPath = item.raw?.imagePath("backdrops") ?: item.poster
-        val backdrop = Repo.imageUrl(backdropPath, 1000)
+        // 背景优先横版剧照（backdrops），没有才退回竖版海报；
+        // 飞牛的两处图都没有时用外部元数据的海报（meta.poster 已是完整 URL，直接交给 AsyncImage）。
+        val localPath = item.raw?.imagePath("backdrops") ?: item.poster
+        val backdrop = Repo.imageUrl(localPath, 1000)
+            .ifEmpty { meta?.poster?.takeIf { it.isNotBlank() }.orEmpty() }
         if (backdrop.isNotEmpty()) {
             AsyncImage(
                 model = backdrop,
@@ -206,25 +252,35 @@ private fun HeroSection(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                if (item.rating > 0) {
+                if (displayRating > 0) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("★", color = Gold, fontSize = 14.sp)
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            String.format("%.1f", item.rating),
+                            String.format("%.1f", displayRating),
                             color = Gold,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                         )
+                        // 评分来自外部元数据时，紧跟着标一个小来源标签
+                        if (ratingSource != null) {
+                            Spacer(Modifier.width(6.dp))
+                            StatusTag(ratingSource, TextSecondary, Surface2)
+                        }
                     }
                 }
-                val meta = buildList {
+                val metaLine = buildList {
                     if (item.year.isNotEmpty()) add(item.year)
                     if (item.seasons > 1) add("${item.seasons} 季")
                     if (item.episodes > 0) add("${item.episodes} 集")
                 }.joinToString(" · ")
-                if (meta.isNotEmpty()) {
-                    Text(meta, color = TextSecondary, fontSize = 13.sp)
+                if (metaLine.isNotEmpty()) {
+                    Text(metaLine, color = TextSecondary, fontSize = 13.sp)
+                }
+                // 外部元数据带放送日期时，接在年份/季集数后面：例如「2024-04-07 放送」
+                val airDate = meta?.airDate.orEmpty()
+                if (airDate.isNotEmpty()) {
+                    Text("$airDate 放送", color = TextSecondary, fontSize = 13.sp, maxLines = 1)
                 }
                 if (item.watched) {
                     StatusTag("已看完", Color(0xFF04101F), Accent)
@@ -233,10 +289,10 @@ private fun HeroSection(
                 }
             }
 
-            if (item.overview.isNotEmpty()) {
+            if (displayOverview.isNotEmpty()) {
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    item.overview,
+                    displayOverview,
                     color = TextSecondary,
                     fontSize = 14.sp,
                     lineHeight = 22.sp,
@@ -244,6 +300,31 @@ private fun HeroSection(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.widthIn(max = 760.dp),
                 )
+            }
+
+            // 主演/声优：只占一行，放在简介和按钮之间，不参与焦点，不会把 Hero 撑高
+            if (castNames.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.widthIn(max = 760.dp),
+                ) {
+                    Text(
+                        "主演/声优",
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        castNames.joinToString(" · "),
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
 
             Spacer(Modifier.height(18.dp))
@@ -470,6 +551,8 @@ fun DetailScreen(
     var seasons by remember(item.guid) { mutableStateOf<List<Season>>(emptyList()) }
     var seasonIndex by remember(item.guid) { mutableIntStateOf(0) }
     var episodes by remember(item.guid) { mutableStateOf<List<Episode>>(emptyList()) }
+    // 外部元数据（Bangumi/TMDB）：可能为空——没 key、网络失败、条目匹配不上都返回 null
+    var meta by remember(item.guid) { mutableStateOf<MetaInfo?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
     var reloadKey by remember(item.guid) { mutableIntStateOf(0) }
     var focusedOnce by remember(item.guid) { mutableStateOf(false) }
@@ -499,6 +582,15 @@ fun DetailScreen(
         } finally {
             loading = false
         }
+    }
+
+    // 外部元数据单独一个协程：和上面的剧集加载并行，互不阻塞。
+    // lookup 内部已处理异常/无 key，这里再包一层 runCatching 兜底，绝不让详情页报错或空白。
+    LaunchedEffect(item.guid, refreshTick) {
+        meta = null
+        meta = runCatching { MetaRepo.lookup(item) }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrNull()
     }
 
     // 只在本页首次进入时聚焦「播放」，切季/播放返回后的刷新不再抢焦点
@@ -565,6 +657,7 @@ fun DetailScreen(
                         HeroSection(
                             modifier = Modifier.fullBleed(48.dp),
                             item = item,
+                            meta = meta,
                             height = heroHeight,
                             playLabel = playLabel,
                             playFocus = playFocus,

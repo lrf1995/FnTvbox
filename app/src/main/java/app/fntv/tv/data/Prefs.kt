@@ -38,6 +38,21 @@ object Prefs {
         get() = prefs.getBoolean("auto_next", true)
         set(v) = prefs.edit().putBoolean("auto_next", v).apply()
 
+    /** TMDB API Key（在 themoviedb.org 免费申请）；为空时详情页只用 Bangumi。 */
+    var tmdbKey: String
+        get() = prefs.getString("tmdb_key", "") ?: ""
+        set(v) = prefs.edit().putString("tmdb_key", v).apply()
+
+    /** 弹幕接口基址（自建弹幕容器的地址），留给下一版弹幕功能用。 */
+    var danmuApiBase: String
+        get() = prefs.getString("danmu_api_base", "") ?: ""
+        set(v) = prefs.edit().putString("danmu_api_base", v).apply()
+
+    /** 播放时是否加载并显示弹幕。 */
+    var danmakuEnabled: Boolean
+        get() = prefs.getBoolean("danmaku_enabled", true)
+        set(v) = prefs.edit().putBoolean("danmaku_enabled", v).apply()
+
     fun clearLogin() {
         prefs.edit().remove("token").apply()
     }
