@@ -82,6 +82,13 @@ object FnApi {
         return sb.toString()
     }
 
+    fun sha256(text: String): String {
+        val bytes = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+        val sb = StringBuilder(bytes.size * 2)
+        for (b in bytes) sb.append(String.format("%02x", b))
+        return sb.toString()
+    }
+
     private val random = SecureRandom()
 
     fun rand6(): String = (100000 + random.nextInt(900000)).toString()
@@ -351,6 +358,33 @@ object FnApi {
     // ───────────────────────── 业务接口 ─────────────────────────
 
     suspend fun login(server: String, username: String, password: String): String {
+        // 新版 fnOS（影视 Web 端也是这套）登录：POST /v/api/v2/user/loginByPassword，
+        // 密码字段是 **SHA-256 十六进制**（不是明文）。旧版 v1 /login 收明文。
+        // 先走 v2；只有「接口不存在/参数不认」(-1 / Not Implemented / HTML) 才回退 v1，
+        // 避免同一份错误密码把账号失败次数打两次。
+        val shaBody = JSONObject()
+            .put("app_name", "trimemedia-web")
+            .put("username", username)
+            .put("password", sha256(password))
+
+        val v2 = runCatching {
+            call(server, "/v/api/v2/user/loginByPassword", "POST", "", shaBody)
+        }
+        val v2Data = v2.getOrNull()
+        if (v2Data != null) {
+            val token = v2Data.optString("token")
+            if (token.isNotEmpty()) return token
+        }
+
+        val v2Err = v2.exceptionOrNull()
+        val shouldFallback = v2Data == null && (
+            v2Err is FnException && v2Err.code == -1 ||
+                v2Err?.message?.contains("Not Implemented", true) == true ||
+                v2Err?.message?.contains("网页", true) == true ||
+                v2Err?.message?.contains("非 JSON", true) == true
+            )
+        if (!shouldFallback) throw (v2Err ?: FnException("登录响应缺少 token"))
+
         val body = JSONObject()
             .put("app_name", "trimemedia-web")
             .put("username", username)

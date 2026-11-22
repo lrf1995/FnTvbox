@@ -292,7 +292,7 @@ fun DetailScreen(
             error != null -> ErrorBox(error!!) { reloadKey++ }
             else -> {
                 LazyVerticalGrid(
-                    columns = GridCells.Fixed(7),
+                    columns = GridCells.Adaptive(108.dp),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 8.dp, bottom = 40.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),

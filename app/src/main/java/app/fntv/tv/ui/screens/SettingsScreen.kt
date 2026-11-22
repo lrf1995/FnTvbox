@@ -1,4 +1,4 @@
-package app.fntv.tv.ui.screens
+﻿package app.fntv.tv.ui.screens
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
@@ -30,6 +30,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -200,7 +201,15 @@ fun SettingsScreen(
         /* ── 关于 ── */
         item {
             SettingsGroup("关于") {
-                SettingRow("版本", value = "1.0.0")
+                SettingRow("版本", value = "1.0.4")
+                SettingRow(
+                    title = "屏幕信息",
+                    subtitle = "排查 UI 适配问题用：把这一行拍照发给开发者",
+                    value = run {
+                        val cfg = LocalConfiguration.current
+                        "${cfg.screenWidthDp}×${cfg.screenHeightDp}dp / density ${cfg.densityDpi}"
+                    },
+                )
                 SettingRow(
                     title = "许可证",
                     subtitle = "协议：GPL-3.0（派生自 fntv-electron / AniBox 的公开协议实现）",

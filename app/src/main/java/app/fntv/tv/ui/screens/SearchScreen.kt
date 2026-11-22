@@ -154,7 +154,7 @@ fun SearchScreen(
                 !searched -> EmptyBox("还没有搜索，先输入片名关键词")
                 results.isEmpty() -> EmptyBox("没有找到相关影片")
                 else -> LazyVerticalGrid(
-                    columns = GridCells.Fixed(6),
+                    columns = GridCells.Adaptive(128.dp),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 4.dp, bottom = 40.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),

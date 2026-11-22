@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,7 +14,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -30,6 +33,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -42,9 +46,8 @@ private val LETTER_ROWS = listOf(
     listOf("z", "x", "c", "v", "b", "n", "m"),
 )
 
-private val DIGIT_ROW = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=")
-
 private val SYMBOL_ROWS = listOf(
+    listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "="),
     listOf("!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "_", "+"),
     listOf("[", "]", "{", "}", ";", ":", "'", "\"", "<", ">", "?", "|"),
     listOf("~", "`", "\\", "/", ",", ".", " "),
@@ -53,7 +56,7 @@ private val SYMBOL_ROWS = listOf(
 @Composable
 private fun Key(
     label: String,
-    width: Int = 56,
+    width: Dp = 54.dp,
     primary: Boolean = false,
     active: Boolean = false,
     focusRequester: FocusRequester? = null,
@@ -62,8 +65,8 @@ private fun Key(
     var focused by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier
-            .width(width.dp)
-            .height(44.dp)
+            .width(width)
+            .height(40.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(
                 when {
@@ -89,16 +92,17 @@ private fun Key(
         Text(
             label,
             color = if (primary && focused) Color(0xFF04101F) else TextPrimary,
-            fontSize = if (label.length > 2) 12.sp else 15.sp,
+            fontSize = if (label.length > 3) 11.sp else 14.sp,
             fontWeight = FontWeight.Medium,
+            maxLines = 1,
         )
     }
 }
 
 /**
- * 遥控器可用的软键盘（含大写与符号，够输入常见密码/片名）。
+ * 遥控器软键盘（含大写/符号/手机扫码输入）。
  *
- * 说明：中文需要系统输入法，这个键盘只负责 ASCII；搜索建议用拼音首字母或英文关键词。
+ * 按键宽度按实际可用宽度计算，4K 电视把密度报成 3.0（逻辑宽 640dp）时也不会横向溢出。
  */
 @Composable
 fun TvKeyboardDialog(
@@ -121,95 +125,104 @@ fun TvKeyboardDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Column(
-            modifier = Modifier
+        BoxWithConstraints(
+            Modifier
                 .fillMaxSize()
                 .background(Color(0xF00A0F1A))
-                .padding(horizontal = 48.dp, vertical = 14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.padding(bottom = 8.dp),
+            // 12 列是最挤的一行，按它算键宽；其余行共用同一宽度
+            val keyW = ((maxWidth - 32.dp - 5.dp * 11) / 12).coerceIn(30.dp, 54.dp)
+            val actW = ((maxWidth - 32.dp - 6.dp * 7) / 8).coerceIn(42.dp, 92.dp)
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(title, color = TextSecondary, fontSize = 13.sp)
-                if (password) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.padding(bottom = 6.dp),
+                ) {
+                    Text(title, color = TextSecondary, fontSize = 12.sp)
+                    if (password) {
+                        Text(
+                            if (reveal) "（明文）" else "（密文）",
+                            color = if (reveal) Gold else TextDim,
+                            fontSize = 10.sp,
+                        )
+                    }
+                }
+
+                LaunchedEffect(Unit) {
+                    repeat(4) { attempt ->
+                        runCatching { firstKey.requestFocus() }
+                        delay(60L + attempt * 80L)
+                    }
+                }
+
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF101827))
+                        .border(1.dp, Accent.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
                     Text(
-                        if (reveal) "（明文）" else "（密文）",
-                        color = if (reveal) Gold else TextDim,
-                        fontSize = 11.sp,
+                        text = shown.ifEmpty { " " },
+                        color = TextPrimary,
+                        fontSize = 17.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-            }
+                Spacer(Modifier.height(8.dp))
 
-            // 焦点必须在 Dialog 自己的窗口里请求；弹窗刚挂载时可能还没布局好，多试几次
-            LaunchedEffect(Unit) {
-                repeat(4) { attempt ->
-                    runCatching { firstKey.requestFocus() }
-                    delay(60L + attempt * 80L)
-                }
-            }
+                val letters = if (shift) LETTER_ROWS.map { row -> row.map(String::uppercase) } else LETTER_ROWS
+                val rows: List<List<String>> = if (symbols) SYMBOL_ROWS else letters
 
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF101827))
-                    .border(1.dp, Accent.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
-                    .padding(horizontal = 16.dp),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                Text(
-                    text = shown.ifEmpty { " " },
-                    color = TextPrimary,
-                    fontSize = 18.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Spacer(Modifier.height(10.dp))
-
-            val letters = if (shift) LETTER_ROWS.map { row -> row.map(String::uppercase) } else LETTER_ROWS
-            val rows: List<List<String>> = if (symbols) SYMBOL_ROWS else letters
-
-            rows.forEachIndexed { rowIndex, row ->
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(bottom = 5.dp),
-                ) {
-                    row.forEachIndexed { chIndex, ch ->
-                        Key(
-                            label = if (ch == " ") "空格" else ch,
-                            width = if (ch == " ") 96 else if (row.size > 10) 50 else 54,
-                            focusRequester = if (!symbols && rowIndex == 0 && chIndex == 0) firstKey else null,
-                        ) {
-                            text += ch
-                            if (shift && !symbols) shift = false
+                rows.forEachIndexed { rowIndex, row ->
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    ) {
+                        row.forEachIndexed { chIndex, ch ->
+                            Key(
+                                label = if (ch == " ") "空格" else ch,
+                                width = if (ch == " ") keyW * 2 else keyW,
+                                focusRequester = if (!symbols && rowIndex == 0 && chIndex == 0) firstKey else null,
+                            ) {
+                                text += ch
+                                if (shift && !symbols) shift = false
+                            }
                         }
                     }
                 }
-            }
 
-            Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Key("大写", width = 76, active = shift) { shift = !shift; symbols = false }
-                Key("符号", width = 76, active = symbols) { symbols = !symbols }
-                Key("手机输入", width = 96, primary = true) { qrOpen = true }
-                if (password) {
-                    Key(if (reveal) "隐藏" else "显示", width = 76, active = reveal) { reveal = !reveal }
+                Spacer(Modifier.height(2.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Key("大写", width = actW, active = shift) { shift = !shift; symbols = false }
+                    Key("符号", width = actW, active = symbols) { symbols = !symbols }
+                    Key("手机输入", width = actW, primary = true) { qrOpen = true }
+                    if (password) {
+                        Key(if (reveal) "隐藏" else "显示", width = actW, active = reveal) { reveal = !reveal }
+                    } else {
+                        Key("空格", width = actW) { text += " " }
+                    }
+                    Key("删除", width = actW) { if (text.isNotEmpty()) text = text.dropLast(1) }
+                    Key("清空", width = actW) { text = "" }
+                    Key("取消", width = actW) { onDismiss() }
+                    Key("确定", width = actW, primary = true) { onConfirm(text) }
                 }
-                Key("空格", width = 84) { text += " " }
-                Key("删除", width = 76) { if (text.isNotEmpty()) text = text.dropLast(1) }
-                Key("清空", width = 68) { text = "" }
-                Key("取消", width = 76) { onDismiss() }
-                Key("确定", width = 90, primary = true) { onConfirm(text) }
             }
         }
     }
 
-    // 手机扫码输入：键盘是遥控器的痛点，这里让手机替它打字
     if (qrOpen) {
         QrInputDialog(
             title = title,

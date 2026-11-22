@@ -123,7 +123,7 @@ fun LibraryScreen(
             items.isEmpty() -> EmptyBox("这个媒体库里还没有内容")
             else -> {
                 LazyVerticalGrid(
-                    columns = GridCells.Fixed(6),
+                    columns = GridCells.Adaptive(128.dp),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 6.dp, bottom = 40.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
