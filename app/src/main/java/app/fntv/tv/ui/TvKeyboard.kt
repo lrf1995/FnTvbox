@@ -112,6 +112,7 @@ fun TvKeyboardDialog(
     var shift by remember { mutableStateOf(false) }
     var symbols by remember { mutableStateOf(false) }
     var reveal by remember { mutableStateOf(false) }
+    var qrOpen by remember { mutableStateOf(false) }
     val firstKey = remember { FocusRequester() }
 
     val shown = if (password && !reveal) "•".repeat(text.length) else text
@@ -195,6 +196,7 @@ fun TvKeyboardDialog(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Key("大写", width = 76, active = shift) { shift = !shift; symbols = false }
                 Key("符号", width = 76, active = symbols) { symbols = !symbols }
+                Key("手机输入", width = 96, primary = true) { qrOpen = true }
                 if (password) {
                     Key(if (reveal) "隐藏" else "显示", width = 76, active = reveal) { reveal = !reveal }
                 }
@@ -205,5 +207,18 @@ fun TvKeyboardDialog(
                 Key("确定", width = 90, primary = true) { onConfirm(text) }
             }
         }
+    }
+
+    // 手机扫码输入：键盘是遥控器的痛点，这里让手机替它打字
+    if (qrOpen) {
+        QrInputDialog(
+            title = title,
+            password = password,
+            onValue = { value ->
+                text = value
+                qrOpen = false
+            },
+            onDismiss = { qrOpen = false },
+        )
     }
 }

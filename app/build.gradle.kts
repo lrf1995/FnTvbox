@@ -12,8 +12,8 @@ android {
         applicationId = "app.fntv.tv"
         minSdk = 23
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
     }
 
     buildTypes {
@@ -62,6 +62,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    // 手机扫码输入：本地生成二维码
+    implementation("com.google.zxing:core:3.5.3")
 
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
