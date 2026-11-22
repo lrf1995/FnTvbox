@@ -275,7 +275,7 @@ fun LoginScreen(onLogged: () -> Unit) {
                 )
                 Spacer(Modifier.width(10.dp))
                 TvButton(
-                    text = "用网页登录",
+                    text = "用飞牛账号登录",
                     onClick = {
                         if (loading) return@TvButton
                         if (server.isBlank()) {
@@ -299,7 +299,7 @@ fun LoginScreen(onLogged: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                "用 fnOS 桌面的本地账号（不是飞牛云账号）；键盘里可切「大写/符号」，也有「手机输入」扫码打字。",
+                "账号密码登录走影视接口；若提示被拒绝，点「用飞牛账号登录」——先登 fnOS（和飞牛 App 同一个账号），会自动进影视并取回会话。",
                 color = TextDim,
                 fontSize = 10.sp,
                 lineHeight = 15.sp,
