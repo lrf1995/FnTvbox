@@ -12,8 +12,8 @@ android {
         applicationId = "app.fntv.tv"
         minSdk = 23
         targetSdk = 34
-        versionCode = 10
-        versionName = "1.2.0"
+        versionCode = 11
+        versionName = "1.3.0"
     }
 
     buildTypes {

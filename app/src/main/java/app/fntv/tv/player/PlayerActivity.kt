@@ -26,6 +26,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import app.fntv.tv.data.DanmakuApi
 import app.fntv.tv.data.FnApi
 import app.fntv.tv.data.FnException
 import app.fntv.tv.data.PlayInfo
@@ -345,6 +346,9 @@ class PlayerActivity : ComponentActivity() {
             exo.prepare()
             exo.playWhenReady = true
             lastReportAt = SystemClock.elapsedRealtime()
+
+            // 弹幕与播放地址相互独立：另起协程拉，晚到/失败都不影响已经在播的视频
+            loadDanmaku(playInfo)
         } catch (e: CancellationException) {
             throw e
         } catch (e: FnException) {
@@ -360,6 +364,73 @@ class PlayerActivity : ComponentActivity() {
             showError(e.message ?: "获取播放信息失败")
         } catch (e: Exception) {
             showError(e.message ?: "播放失败")
+        }
+    }
+
+    // ───────────────────────── 弹幕 ─────────────────────────
+
+    /**
+     * 拉本集弹幕。
+     *
+     * 约定：
+     *  - 开关关 / 没配弹幕服务 / 拿不到剧名 → 清空并静默返回，控制条上什么也不显示；
+     *  - 请求成功但没弹幕 → `danmakuHint = "未找到弹幕"`，只作一行提示，不弹错误；
+     *  - 用 currentIndex 防串集：切集后旧请求回来直接丢弃，避免上一集的弹幕盖在新片上。
+     */
+    private fun loadDanmaku(playInfo: PlayInfo) {
+        val title = playInfo.tvTitle.ifBlank { playInfo.title }
+        if (!ui.danmakuOn || Prefs.danmuApiBase.isBlank() || title.isBlank()) {
+            ui.danmaku = emptyList()
+            ui.danmakuLoading = false
+            ui.danmakuHint = ""
+            return
+        }
+
+        val requestIndex = currentIndex
+        ui.danmaku = emptyList()
+        ui.danmakuHint = ""
+        ui.danmakuLoading = true
+
+        lifecycleScope.launch {
+            val list = try {
+                DanmakuApi.fetch(title, playInfo.season, playInfo.episode)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // DanmakuApi 内部已经兜过异常，这层只是保险：弹幕永远不能把播放页搞崩
+                emptyList()
+            }
+            if (isFinishing || isDestroyed) return@launch
+            if (currentIndex != requestIndex) return@launch
+
+            ui.danmaku = list
+            ui.danmakuLoading = false
+            ui.danmakuHint = if (list.isEmpty()) "未找到弹幕" else ""
+        }
+    }
+
+    /** 控制条上的「弹幕 开/关」：改内存状态并写回偏好；关掉时立刻停画。 */
+    private fun toggleDanmaku() {
+        ui.danmakuOn = !ui.danmakuOn
+        Prefs.danmakuEnabled = ui.danmakuOn
+
+        if (!ui.danmakuOn) {
+            ui.danmakuLoading = false
+            ui.danmakuHint = ""
+            toast("弹幕已关闭")
+            return
+        }
+
+        if (Prefs.danmuApiBase.isBlank()) {
+            // 开关本身记住，但得先告诉用户去哪里填地址，否则「打开了却没反应」
+            toast("请先在设置里填写弹幕 API 地址")
+            return
+        }
+
+        toast("弹幕已开启")
+        // 起播时开关是关的，所以本集可能根本没拉过弹幕：打开后补拉一次
+        if (ui.danmaku.isEmpty() && !ui.danmakuLoading) {
+            info?.let { loadDanmaku(it) }
         }
     }
 
@@ -617,6 +688,7 @@ class PlayerActivity : ComponentActivity() {
             PlayerAction.NEXT -> nextEpisode()
             PlayerAction.AUDIO -> openTrackOverlay(PlayerOverlay.AUDIO)
             PlayerAction.SUBTITLE -> openTrackOverlay(PlayerOverlay.SUBTITLE)
+            PlayerAction.DANMAKU -> toggleDanmaku()
             PlayerAction.SPEED -> cycleSpeed()
         }
         revealControls()

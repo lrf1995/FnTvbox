@@ -56,6 +56,8 @@ import androidx.media3.common.TrackGroup
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import app.fntv.tv.data.DanmakuComment
+import app.fntv.tv.data.Prefs
 import app.fntv.tv.ui.Accent
 import app.fntv.tv.ui.Bg
 import app.fntv.tv.ui.Danger
@@ -65,6 +67,7 @@ import app.fntv.tv.ui.TextDim
 import app.fntv.tv.ui.TextPrimary
 import app.fntv.tv.ui.TextSecondary
 import app.fntv.tv.ui.TvButton
+import app.fntv.tv.ui.player.DanmakuOverlay
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -75,7 +78,7 @@ internal enum class PlayerOverlay { NONE, AUDIO, SUBTITLE }
 
 /** 底部控制条上的可选中动作。 */
 internal enum class PlayerAction {
-    BACK, PLAY_PAUSE, REWIND, FORWARD, NEXT, AUDIO, SUBTITLE, SPEED, EXIT
+    BACK, PLAY_PAUSE, REWIND, FORWARD, NEXT, AUDIO, SUBTITLE, DANMAKU, SPEED, EXIT
 }
 
 /**
@@ -90,6 +93,7 @@ internal val PlayerActionOrder = listOf(
     PlayerAction.NEXT,
     PlayerAction.AUDIO,
     PlayerAction.SUBTITLE,
+    PlayerAction.DANMAKU,
     PlayerAction.SPEED,
     PlayerAction.EXIT,
 )
@@ -131,6 +135,15 @@ internal class PlayerUiState {
     var overlay by mutableStateOf(PlayerOverlay.NONE)
     var trackOptions by mutableStateOf<List<TrackOption>>(emptyList())
     var trackSelected by mutableIntStateOf(0)
+
+    /** 弹幕总开关：初始值取设置页里的偏好，控制条上可以直接切。 */
+    var danmakuOn by mutableStateOf(Prefs.danmakuEnabled)
+    /** 本集弹幕（已按时间升序）；空列表就是没弹幕，画层会自动留空。 */
+    var danmaku by mutableStateOf<List<DanmakuComment>>(emptyList())
+    /** 正在拉弹幕：控制条上给一行「弹幕加载中」。 */
+    var danmakuLoading by mutableStateOf(false)
+    /** 一行提示：例如「未找到弹幕」，只在控制条上短暂显示，不弹错误框。 */
+    var danmakuHint by mutableStateOf("")
 }
 
 /* ───────────────────────── 页面骨架 ───────────────────────── */
@@ -162,6 +175,14 @@ internal fun PlayerScreen(
         }
     }
 
+    // 「未找到弹幕」这类提示只短暂停在控制条上，避免整集都挂着
+    LaunchedEffect(ui.danmakuHint) {
+        if (ui.danmakuHint.isNotBlank()) {
+            delay(4_000L)
+            ui.danmakuHint = ""
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -183,6 +204,9 @@ internal fun PlayerScreen(
             update = { view -> if (view.player !== player) view.setPlayer(player) },
             modifier = Modifier.fillMaxSize(),
         )
+
+        // 弹幕层：在 PlayerView 之上、控制条之下。关掉时画层自己留空，不改变布局。
+        DanmakuLayer(ui = ui)
 
         if (ui.loading && ui.error == null) LoadingPane()
 
@@ -213,6 +237,20 @@ internal fun PlayerScreen(
             ErrorPane(ui = ui, message = error, onChoose = onErrorChoice)
         }
     }
+}
+
+/**
+ * 弹幕层单独包一个 composable：进度每 500ms 变一次，让这层自己重组就够，
+ * 不要带着整个播放页（顶栏/底栏/PlayerView）一起重组。
+ */
+@Composable
+private fun DanmakuLayer(ui: PlayerUiState) {
+    DanmakuOverlay(
+        comments = ui.danmaku,
+        positionMs = ui.positionMs,
+        enabled = ui.danmakuOn,
+        modifier = Modifier.fillMaxSize(),
+    )
 }
 
 /* ───────────────────────── 顶部 ───────────────────────── */
@@ -329,6 +367,9 @@ private fun PlayerBottomBar(ui: PlayerUiState, onAction: (PlayerAction) -> Unit)
                     append(if (ui.isPlaying) "播放中" else "已暂停")
                     append(" · 倍速 ${formatSpeed(ui.speed)}")
                     if (ui.subtitleOn) append(" · 字幕开")
+                    // 弹幕状态优先显示加载中，其次才是「未找到弹幕」这类短提示
+                    if (ui.danmakuLoading) append(" · 弹幕加载中")
+                    else if (ui.danmakuHint.isNotBlank()) append(" · ${ui.danmakuHint}")
                 },
                 color = TextDim,
                 fontSize = 14.sp,
@@ -353,6 +394,12 @@ private fun PlayerBottomBar(ui: PlayerUiState, onAction: (PlayerAction) -> Unit)
             ActionButton(PlayerAction.NEXT, "下一集", ui, onAction, enabled = ui.hasNext)
             ActionButton(PlayerAction.AUDIO, "音轨", ui, onAction)
             ActionButton(PlayerAction.SUBTITLE, "字幕", ui, onAction)
+            ActionButton(
+                action = PlayerAction.DANMAKU,
+                label = if (ui.danmakuOn) "弹幕 开" else "弹幕 关",
+                ui = ui,
+                onAction = onAction,
+            )
             ActionButton(PlayerAction.SPEED, formatSpeed(ui.speed), ui, onAction)
             ActionButton(PlayerAction.EXIT, "退出", ui, onAction)
         }
