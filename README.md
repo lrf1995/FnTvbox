@@ -214,6 +214,30 @@ fntv-tv/
 
 ---
 
+## 更新与发布
+
+本仓库的日常更新走一条固定流水线：**改代码 → 提交 → 推 `main` → CI 出 APK → 打 tag 发 Release**。
+
+```bash
+# 只推代码（CI 会构建，产物在 Actions → Artifacts）
+powershell -NoProfile -File tools\push.ps1 -Message "fix: 修复 xxx"
+
+# 发版：先在 app/build.gradle.kts 改 versionCode/versionName，再
+powershell -NoProfile -File tools\push.ps1 -Message "release: v1.1.0" -Tag v1.1.0
+```
+
+也可以手工：
+
+```bash
+git push origin main
+git tag v1.1.0 && git push origin v1.1.0
+```
+
+> `tools/push.ps1` 从 `$env:GH_TOKEN` 读取令牌（fine-grained PAT，需要 **Contents** 与 **Workflows** 读写），
+> 令牌只出现在单次命令里，不会写进 `.git/config`。没有令牌时直接 `git push` 走本机凭据即可。
+
+---
+
 ## 合规与免责声明
 
 - 本项目是**第三方、非官方**客户端，与飞牛影视 / fnOS 官方无隶属、合作或背书关系。
