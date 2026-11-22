@@ -61,6 +61,28 @@ object Repo {
         invalidate()
     }
 
+    /**
+     * 网页登录兜底：WebView 登录成功后从 Cookie 拿到的 Trim-MC-token 直接当会话用。
+     * 与 API 登录拿到的 token 等价，只是跳过了密码协议（也顺带绕过限流/二次验证）。
+     */
+    suspend fun adoptSession(serverInput: String, tokenValue: String) {
+        val base = FnApi.normalizeServer(serverInput)
+        server = base
+        token = tokenValue
+        Prefs.server = base
+        Prefs.token = tokenValue
+        invalidate()
+        // 顺手补上用户名（拿不到也不影响使用）
+        runCatching {
+            val info = FnApi.userInfo(base, tokenValue)
+            val name = info.str("username", "user_name", "nickname", "name")
+            if (name.isNotEmpty()) {
+                username = name
+                Prefs.username = name
+            }
+        }
+    }
+
     fun invalidate() {
         homeCache = null
         itemCache.clear()

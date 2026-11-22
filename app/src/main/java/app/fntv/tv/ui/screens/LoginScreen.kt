@@ -1,5 +1,9 @@
 package app.fntv.tv.ui.screens
 
+import android.app.Activity
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -32,10 +37,12 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.fntv.tv.WebLoginActivity
 import app.fntv.tv.data.FnException
 import app.fntv.tv.data.Prefs
 import app.fntv.tv.data.Repo
@@ -49,6 +56,7 @@ import app.fntv.tv.ui.TextPrimary
 import app.fntv.tv.ui.TextSecondary
 import app.fntv.tv.ui.TvButton
 import app.fntv.tv.ui.TvKeyboardDialog
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -102,8 +110,44 @@ fun LoginScreen(onLogged: () -> Unit) {
     var editing by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var cooldown by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
     val connectFocus = remember { FocusRequester() }
+    val context = LocalContext.current
+
+    // 失败冷却：飞牛对同一账号连续失败会临时封禁，这里先自己停下来，别越试越久
+    LaunchedEffect(cooldown) {
+        if (cooldown > 0) {
+            delay(1000)
+            cooldown -= 1
+        }
+    }
+
+    // 网页登录兜底：在 fnOS 网页里登录，成功后从 Cookie 取 Trim-MC-token
+    val webLogin = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val token = result.data?.getStringExtra("token").orEmpty()
+            val base = result.data?.getStringExtra("server").orEmpty()
+            if (token.isNotEmpty()) {
+                loading = true
+                error = null
+                scope.launch {
+                    try {
+                        Repo.adoptSession(base.ifEmpty { server }, token)
+                        onLogged()
+                    } catch (e: Exception) {
+                        error = "网页登录成功，但保存会话失败：${e.message}"
+                    } finally {
+                        loading = false
+                    }
+                }
+            } else {
+                error = "网页登录没有拿到 token，请确认已经登录成功"
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -180,9 +224,13 @@ fun LoginScreen(onLogged: () -> Unit) {
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TvButton(
-                        text = if (loading) "连接中…" else "连接并进入",
+                        text = when {
+                            loading -> "连接中…"
+                            cooldown > 0 -> "请等待 ${cooldown}s"
+                            else -> "连接并进入"
+                        },
                         onClick = {
-                            if (loading) return@TvButton
+                            if (loading || cooldown > 0) return@TvButton
                             error = null
                             if (server.isBlank() || username.isBlank() || password.isEmpty()) {
                                 error = "请把地址、用户名、密码都填完整"
@@ -194,7 +242,16 @@ fun LoginScreen(onLogged: () -> Unit) {
                                     Repo.login(server, username, password)
                                     onLogged()
                                 } catch (e: Exception) {
-                                    error = friendlyLoginError(e.message ?: "登录失败")
+                                    val raw = e.message ?: "登录失败"
+                                    error = friendlyLoginError(raw)
+                                    // -15 既可能是密码错，也可能是失败过多被临时限流：
+                                    // 先冷却 30 秒，避免把封禁越试越长
+                                    if (raw.contains("-15", true) ||
+                                        raw.contains("Password Incorrect", true) ||
+                                        raw.contains("密码")
+                                    ) {
+                                        cooldown = 30
+                                    }
                                 } finally {
                                     loading = false
                                 }
@@ -202,6 +259,18 @@ fun LoginScreen(onLogged: () -> Unit) {
                         },
                         primary = true,
                         focusRequester = connectFocus,
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    TvButton(
+                        text = "用网页登录",
+                        onClick = {
+                            if (loading) return@TvButton
+                            val target = server.ifBlank { "http://192.168.1.10:5666" }
+                            webLogin.launch(
+                                Intent(context, WebLoginActivity::class.java)
+                                    .putExtra("server", target)
+                            )
+                        },
                     )
                     if (loading) {
                         Spacer(Modifier.width(16.dp))
@@ -212,6 +281,13 @@ fun LoginScreen(onLogged: () -> Unit) {
                         )
                     }
                 }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "两条路等效：API 登录失败（尤其提示密码不正确）时，用「网页登录」在 fnOS 页面里登一次即可，客户端会自动取到会话。",
+                    color = TextDim,
+                    fontSize = 10.sp,
+                    lineHeight = 16.sp,
+                )
             }
         }
 
@@ -239,13 +315,15 @@ fun LoginScreen(onLogged: () -> Unit) {
 private fun friendlyLoginError(raw: String): String {
     val lower = raw.lowercase()
     return when {
-        lower.contains("password incorrect") || raw.contains("密码错误") || raw.contains("密码不正确") ->
-            "密码不正确。请确认：① 用的是 NAS 本地账号（不是飞牛云 / FN Connect 账号）；" +
-                "② 大小写和符号没输错（软键盘左下可切「大写」「符号」，右侧「显示」可核对明文）。"
+        lower.contains("password incorrect") || lower.contains("-15") ||
+            raw.contains("密码错误") || raw.contains("密码不正确") ->
+            "登录被拒绝（$raw）。飞牛的 -15 不区分「密码错」和「失败过多被临时限流」，" +
+                "限流期间即使密码正确也一律报这个。请先核对密码（注意大小写/符号），" +
+                "若确认无误请等 10 分钟再试一次，不要连续点；也可以直接点「用网页登录」绕过。"
         lower.contains("user not exist") || lower.contains("not found") || raw.contains("用户不存在") ->
             "账号不存在：请填 fnOS 的本地用户名（不是邮箱，也不是飞牛云 ID）。"
-        lower.contains("too many") || raw.contains("封禁") || raw.contains("频繁") ->
-            "尝试次数过多，飞牛可能已临时封禁：请等 30 秒再试，不要连续点。"
+        raw.contains("访问码") ->
+            "这台 NAS 开了「应用访问码」：请先用「用网页登录」完成门禁验证。"
         else -> raw
     }
 }
