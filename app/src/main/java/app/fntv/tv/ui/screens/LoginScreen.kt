@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.fntv.tv.WebLoginActivity
+import app.fntv.tv.data.Discovery
 import app.fntv.tv.data.FnException
 import app.fntv.tv.data.Prefs
 import app.fntv.tv.data.Repo
@@ -125,6 +126,8 @@ fun LoginScreen(onLogged: () -> Unit) {
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var cooldown by remember { mutableIntStateOf(0) }
+    var discovering by remember { mutableStateOf(false) }
+    var discoverHint by remember { mutableStateOf<String?>(null) }
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -213,7 +216,38 @@ fun LoginScreen(onLogged: () -> Unit) {
             )
             Spacer(Modifier.height(14.dp))
 
-            InputRow("服务器地址", server, "192.168.1.10:5666", focusRequester = serverFocus) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TvButton(
+                    text = if (discovering) "正在扫描…" else "自动发现 NAS",
+                    onClick = {
+                        if (discovering) return@TvButton
+                        discovering = true
+                        discoverHint = null
+                        scope.launch {
+                            try {
+                                val list = Discovery.discoverNas()
+                                if (list.isEmpty()) {
+                                    discoverHint = "没扫到 NAS：确认电视和 NAS 在同一 Wi-Fi，或手动填地址"
+                                } else {
+                                    server = list.first()
+                                    discoverHint = "发现 ${list.size} 个，已填入 ${list.first()}"
+                                }
+                            } catch (e: Exception) {
+                                discoverHint = "扫描失败：${e.message}"
+                            } finally {
+                                discovering = false
+                            }
+                        }
+                    },
+                )
+                if (discoverHint != null) {
+                    Spacer(Modifier.width(10.dp))
+                    Text(discoverHint!!, color = Accent, fontSize = 10.sp, lineHeight = 14.sp)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+
+            InputRow("服务器地址", server, "192.168.31.100:5666", focusRequester = serverFocus) {
                 lastEditing = "server"; editing = "server"
             }
             InputRow("用户名", username, "NAS 本地账号", focusRequester = userFocus) {
@@ -244,10 +278,13 @@ fun LoginScreen(onLogged: () -> Unit) {
                     text = "用网页登录",
                     onClick = {
                         if (loading) return@TvButton
-                        val target = server.ifBlank { "http://192.168.1.10:5666" }
+                        if (server.isBlank()) {
+                            error = "请先填服务器地址（可点「自动发现 NAS」），再打开网页登录"
+                            return@TvButton
+                        }
                         webLogin.launch(
                             Intent(context, WebLoginActivity::class.java)
-                                .putExtra("server", target)
+                                .putExtra("server", server)
                         )
                     },
                 )
@@ -356,7 +393,7 @@ fun LoginScreen(onLogged: () -> Unit) {
     }
 
     when (editing) {
-        "server" -> TvKeyboardDialog("服务器地址", server, onDismiss = { editing = null }) {
+        "server" -> TvKeyboardDialog("服务器地址", server, numeric = true, onDismiss = { editing = null }) {
             server = it.trim(); editing = null
         }
         "username" -> TvKeyboardDialog("用户名", username, onDismiss = { editing = null }) {

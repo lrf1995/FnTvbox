@@ -53,6 +53,11 @@ private val SYMBOL_ROWS = listOf(
     listOf("~", "`", "\\", "/", ",", ".", " "),
 )
 
+private val NUM_ROWS = listOf(
+    listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"),
+    listOf(".", ":", "/", "-", "_"),
+)
+
 @Composable
 private fun Key(
     label: String,
@@ -109,6 +114,7 @@ fun TvKeyboardDialog(
     title: String,
     initial: String,
     password: Boolean = false,
+    numeric: Boolean = false,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
@@ -117,6 +123,7 @@ fun TvKeyboardDialog(
     var symbols by remember { mutableStateOf(false) }
     var reveal by remember { mutableStateOf(false) }
     var qrOpen by remember { mutableStateOf(false) }
+    var numberPad by remember { mutableStateOf(numeric) }
     val firstKey = remember { FocusRequester() }
 
     val shown = if (password && !reveal) "•".repeat(text.length) else text
@@ -130,9 +137,13 @@ fun TvKeyboardDialog(
                 .fillMaxSize()
                 .background(Color(0xF00A0F1A))
         ) {
-            // 12 列是最挤的一行，按它算键宽；其余行共用同一宽度
-            val keyW = ((maxWidth - 32.dp - 5.dp * 11) / 12).coerceIn(30.dp, 54.dp)
-            val actW = ((maxWidth - 32.dp - 6.dp * 7) / 8).coerceIn(42.dp, 92.dp)
+            // 数字键盘 10 列，字母/符号 12 列，分别按可用宽度算键宽
+            val keyW = if (numberPad) {
+                ((maxWidth - 32.dp - 5.dp * 9) / 10).coerceIn(38.dp, 72.dp)
+            } else {
+                ((maxWidth - 32.dp - 5.dp * 11) / 12).coerceIn(30.dp, 54.dp)
+            }
+            val actW = ((maxWidth - 32.dp - 6.dp * 8) / 9).coerceIn(40.dp, 84.dp)
 
             Column(
                 modifier = Modifier
@@ -184,7 +195,11 @@ fun TvKeyboardDialog(
                 Spacer(Modifier.height(8.dp))
 
                 val letters = if (shift) LETTER_ROWS.map { row -> row.map(String::uppercase) } else LETTER_ROWS
-                val rows: List<List<String>> = if (symbols) SYMBOL_ROWS else letters
+                val rows: List<List<String>> = when {
+                    numberPad -> NUM_ROWS
+                    symbols -> SYMBOL_ROWS
+                    else -> letters
+                }
 
                 rows.forEachIndexed { rowIndex, row ->
                     Row(
@@ -195,7 +210,7 @@ fun TvKeyboardDialog(
                             Key(
                                 label = if (ch == " ") "空格" else ch,
                                 width = if (ch == " ") keyW * 2 else keyW,
-                                focusRequester = if (!symbols && rowIndex == 0 && chIndex == 0) firstKey else null,
+                                focusRequester = if (rowIndex == 0 && chIndex == 0) firstKey else null,
                             ) {
                                 text += ch
                                 if (shift && !symbols) shift = false
@@ -206,8 +221,14 @@ fun TvKeyboardDialog(
 
                 Spacer(Modifier.height(2.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Key("大写", width = actW, active = shift) { shift = !shift; symbols = false }
-                    Key("符号", width = actW, active = symbols) { symbols = !symbols }
+                    Key(if (numberPad) "字母" else "数字", width = actW, active = numberPad) {
+                        numberPad = !numberPad
+                        symbols = false
+                    }
+                    if (!numberPad) {
+                        Key("大写", width = actW, active = shift) { shift = !shift; symbols = false }
+                        Key("符号", width = actW, active = symbols) { symbols = !symbols }
+                    }
                     Key("手机输入", width = actW, primary = true) { qrOpen = true }
                     if (password) {
                         Key(if (reveal) "隐藏" else "显示", width = actW, active = reveal) { reveal = !reveal }
